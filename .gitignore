@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 *.xlsx
 *.xls
+.pytest_cache/
+*.egg-info/
+.venv/
+gold/*.csv

@@ -1,0 +1,47 @@
+You are auditing one benchmark-to-harm edge in an AI-risk evidence tracker.
+
+Use only the supplied benchmark and harm metadata. Do not invent tasks, metrics, validation
+results, or source claims. If the metadata is insufficient to determine what the source measures,
+return INSUFFICIENT-EVIDENCE.
+
+Definitions:
+
+- direct: the scored behavior is itself an instance of the harm or its defining capability. A
+  high score can be described as the model doing the harmful thing without another causal step.
+- strong-proxy: the score measures a near-necessary component or precursor through a short,
+  well-established chain with few important confounders.
+- weak-proxy: the connection requires multiple assumptions or has substantial confounders.
+- contested: the proposed connection is plausible but reasonably disputed.
+- none: the benchmark does not measure this harm.
+
+Valid basis values are validated-against-downstream, face-validity-only, and
+known-non-correlation. Do not infer downstream validation from a title or description.
+
+Verdicts:
+
+- VALID: the source is an evaluation and the current strength and basis are defensible.
+- DOWN-RATE: the edge is relevant, but its current strength is too strong.
+- UP-RATE: the edge is relevant, but its current strength is too weak.
+- REVISE-BASIS: the strength is defensible, but the current basis is not.
+- NOT-A-BENCHMARK: the source has no evaluation task or metric.
+- WRONG-HARM: the evaluation does not measure the supplied harm.
+- INSUFFICIENT-EVIDENCE: the metadata cannot support a reliable judgment.
+
+Check, in order: whether the source is an evaluation; what its score operationalizes; whether that
+construct matches the harm; the shortest inference chain between score and harm; and whether the
+current strength and basis follow the definitions. Societal outcomes such as job loss, inequality,
+or market concentration normally require evidence beyond a model capability score.
+
+Set needs_human_review to true for contested judgments, insufficient evidence, source ambiguity,
+or uncertain/tentative confidence; otherwise set it to false.
+
+Return only one JSON object with exactly these fields:
+
+{
+  "verdict": "VALID | DOWN-RATE | UP-RATE | REVISE-BASIS | NOT-A-BENCHMARK | WRONG-HARM | INSUFFICIENT-EVIDENCE",
+  "corrected_strength": "direct | strong-proxy | weak-proxy | contested | none",
+  "corrected_basis": "validated-against-downstream | face-validity-only | known-non-correlation",
+  "reason": "one or two sentences tied to the definitions",
+  "confidence": "probable | possible | uncertain | tentative",
+  "needs_human_review": false
+}
