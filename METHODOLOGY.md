@@ -29,6 +29,10 @@ labels remain visible because reviewers need to assess whether they are defensib
 not copied into the gold columns. Model predictions should not be shown to annotators before the
 first-pass labels are complete.
 
+Completed gold files are version-controlled. A revision to a gold judgment is a normal reviewed
+change and should state why the label changed. Source workbooks and model outputs remain outside
+Git.
+
 If multiple human annotators are available, report their agreement before adjudication. Keep both
 raw annotation files and document adjudication decisions outside the model prompt.
 

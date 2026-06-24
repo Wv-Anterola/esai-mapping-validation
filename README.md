@@ -138,5 +138,5 @@ ruff check mapping_validation tests
 pytest
 ```
 
-Workbooks, gold annotations, model outputs, and tracker patches are ignored by Git.
-
+Workbooks, model outputs, and tracker patches are ignored by Git. Completed gold annotations are
+version-controlled because they define the evaluation set; do not commit a source workbook.
