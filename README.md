@@ -66,8 +66,9 @@ esai-validate prepare-source-registry \
 
 Fill `source_url` and `source_abstract`, then change `source_status` from `pending` to `verified`
 only after checking the benchmark identity. A collection catalog can also supply source metadata
-when its normalized paper title exactly matches the tracker title. Registry entries take
-precedence. Unverified registry entries are never treated as source-grounded.
+when its normalized paper title exactly matches the tracker title or the collection pipeline has
+recorded one unique conservative title alias. The recorded match method is preserved. Registry
+entries take precedence. Unverified registry entries are never treated as source-grounded.
 
 Do not begin semantic annotation or a model run while relevant rows remain
 `benchmark_source_missing` or `benchmark_metadata_incomplete` in the audit.

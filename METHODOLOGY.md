@@ -24,8 +24,9 @@ edge from annotation or model evaluation:
 - strength or basis falls outside the controlled vocabulary.
 
 The current tracker label is context, not evidence. Source metadata must come from the verified
-source registry or an exact normalized-title match in the systematic collection catalog. The
-model and human reviewers may not fill missing evidence from memory.
+source registry, an exact normalized-title catalog match, or a unique conservative alias already
+recorded by the systematic collection pipeline. The model and human reviewers may not fill
+missing evidence from memory.
 
 ## Gold-set design
 

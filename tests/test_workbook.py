@@ -92,6 +92,30 @@ def test_source_registry_prefills_exact_catalog_matches(
     assert "verify benchmark identity" in match["notes"]
 
 
+def test_collection_alias_match_carries_source_context(
+    workbook: Path, tmp_path: Path
+) -> None:
+    catalog = tmp_path / "candidates.csv"
+    pd.DataFrame(
+        [
+            {
+                "title": "Behavior Benchmark: Extended Title",
+                "paper_url": "https://example.test/behavior",
+                "abstract": "A source abstract.",
+                "already_in_tracker": "True",
+                "tracker_match": "Behavior Benchmark",
+                "tracker_match_method": "conservative-title-alias",
+            }
+        ]
+    ).to_csv(catalog, index=False)
+
+    context = load_context(workbook, candidate_catalog=catalog).set_index("edge_id")
+    assert context.loc["e1", "context_status"] == "source-grounded"
+    assert context.loc["e1", "source_match_method"] == (
+        "catalog-conservative-title-alias"
+    )
+
+
 def test_duplicate_edge_ids_are_audited_without_expanding_rows(
     workbook: Path, tmp_path: Path
 ) -> None:

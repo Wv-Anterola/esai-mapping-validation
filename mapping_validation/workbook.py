@@ -101,7 +101,12 @@ def _source_registry(path: Path | None) -> pd.DataFrame:
 
 
 def _candidate_catalog(path: Path | None) -> pd.DataFrame:
-    columns = ["title_key", "catalog_source_url", "catalog_source_abstract"]
+    columns = [
+        "title_key",
+        "catalog_source_url",
+        "catalog_source_abstract",
+        "catalog_match_method",
+    ]
     if path is None:
         return pd.DataFrame(columns=columns)
     frame = pd.read_csv(path, dtype=str).fillna("")
@@ -109,15 +114,46 @@ def _candidate_catalog(path: Path | None) -> pd.DataFrame:
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(f"candidate catalog is missing columns: {sorted(missing)}")
-    frame["title_key"] = frame["title"].map(_normalise_title)
+    tracker_match_available = {
+        "tracker_match",
+        "tracker_match_method",
+        "already_in_tracker",
+    }.issubset(frame.columns)
+    if tracker_match_available:
+        matched = (frame["already_in_tracker"].str.strip().str.casefold() == "true") & (
+            frame["tracker_match"].str.strip() != ""
+        )
+        frame["catalog_match_title"] = frame["title"]
+        frame.loc[matched, "catalog_match_title"] = frame.loc[matched, "tracker_match"]
+        frame["catalog_match_method"] = "exact-normalized-title"
+        frame.loc[matched, "catalog_match_method"] = frame.loc[
+            matched, "tracker_match_method"
+        ].replace(
+            {
+                "exact-normalized-title": "exact-normalized-title",
+                "conservative-title-alias": "catalog-conservative-title-alias",
+            }
+        )
+    else:
+        frame["catalog_match_title"] = frame["title"]
+        frame["catalog_match_method"] = "exact-normalized-title"
+    frame["title_key"] = frame["catalog_match_title"].map(_normalise_title)
     frame = frame.rename(
         columns={
             "paper_url": "catalog_source_url",
             "abstract": "catalog_source_abstract",
         }
     )
-    ambiguous = frame["title_key"].duplicated(keep=False)
-    return frame.loc[~ambiguous, columns]
+    selected: list[pd.Series] = []
+    for _, group in frame.groupby("title_key", sort=False):
+        exact = group[group["catalog_match_method"] == "exact-normalized-title"]
+        if len(exact) == 1:
+            selected.append(exact.iloc[0])
+        elif len(exact) == 0 and len(group) == 1:
+            selected.append(group.iloc[0])
+    if not selected:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(selected)[columns]
 
 
 def source_registry_template(
@@ -142,7 +178,7 @@ def source_registry_template(
                 "source_status": "pending",
                 "verified_at": "",
                 "notes": (
-                    "Prefilled from an exact normalized-title catalog match; "
+                    f"Prefilled from {row.get('catalog_match_method')}; "
                     "verify benchmark identity."
                     if prefilled
                     else ""
@@ -306,7 +342,7 @@ def load_context(
     )
     context["source_match_method"] = ""
     context.loc[context.get("catalog_source_url", "") != "", "source_match_method"] = (
-        "exact-normalized-title"
+        context.loc[context.get("catalog_source_url", "") != "", "catalog_match_method"]
     )
     context.loc[
         registry_verified & (context.get("registry_source_url", "") != ""),
