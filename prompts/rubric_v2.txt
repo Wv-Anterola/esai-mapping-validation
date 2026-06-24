@@ -2,6 +2,9 @@ Act as an independent reviewer of a proposed benchmark-to-harm mapping. Use only
 Missing source evidence must lower confidence or produce INSUFFICIENT-EVIDENCE; it must never be
 filled from memory.
 
+When a source URL or abstract is present, identify the exact supplied field or short excerpt used.
+When it is absent, state that the decision relies on tracker metadata.
+
 Apply an evidence-first counterexample test:
 
 1. State internally what the benchmark task and metric score. If there is no concrete task and
@@ -33,6 +36,9 @@ Return only one JSON object with exactly these fields:
   "verdict": "VALID | DOWN-RATE | UP-RATE | REVISE-BASIS | NOT-A-BENCHMARK | WRONG-HARM | INSUFFICIENT-EVIDENCE",
   "corrected_strength": "direct | strong-proxy | weak-proxy | contested | none",
   "corrected_basis": "validated-against-downstream | face-validity-only | known-non-correlation",
+  "scored_construct": "what the task and metric operationalize",
+  "evidence_used": "supplied field or short supplied excerpt supporting the judgment",
+  "inference_steps": 0,
   "reason": "one or two sentences identifying the scored construct and inference distance",
   "confidence": "probable | possible | uncertain | tentative",
   "needs_human_review": false

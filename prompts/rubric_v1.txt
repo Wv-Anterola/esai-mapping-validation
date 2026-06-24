@@ -4,6 +4,9 @@ Use only the supplied benchmark and harm metadata. Do not invent tasks, metrics,
 results, or source claims. If the metadata is insufficient to determine what the source measures,
 return INSUFFICIENT-EVIDENCE.
 
+When a source URL or abstract is present, identify the exact supplied field or short excerpt used.
+When it is absent, state that the decision relies on tracker metadata.
+
 Definitions:
 
 - direct: the scored behavior is itself an instance of the harm or its defining capability. A
@@ -41,6 +44,9 @@ Return only one JSON object with exactly these fields:
   "verdict": "VALID | DOWN-RATE | UP-RATE | REVISE-BASIS | NOT-A-BENCHMARK | WRONG-HARM | INSUFFICIENT-EVIDENCE",
   "corrected_strength": "direct | strong-proxy | weak-proxy | contested | none",
   "corrected_basis": "validated-against-downstream | face-validity-only | known-non-correlation",
+  "scored_construct": "what the task and metric operationalize",
+  "evidence_used": "supplied field or short supplied excerpt supporting the judgment",
+  "inference_steps": 0,
   "reason": "one or two sentences tied to the definitions",
   "confidence": "probable | possible | uncertain | tentative",
   "needs_human_review": false

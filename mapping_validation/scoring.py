@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -94,16 +95,71 @@ def macro_f1(gold: list[str], predicted: list[str]) -> float | None:
     return sum(scores) / len(scores)
 
 
-def score_rows(
-    gold_rows: list[dict[str, str]], prediction_rows: list[dict[str, Any]]
-) -> tuple[dict[str, object], list[dict[str, object]]]:
-    completed_gold = {
-        row["edge_id"]: row
-        for row in gold_rows
-        if row.get("annotation_status", "").casefold() == "complete"
-        or row.get("gold_verdict", "")
+def validate_prediction_run(prediction_rows: list[dict[str, Any]]) -> None:
+    runs = {
+        (str(row.get("prompt_sha256", "")), str(row.get("model", "")))
+        for row in prediction_rows
     }
-    for edge_id, row in completed_gold.items():
+    if len(runs) > 1:
+        raise ValueError(
+            "prediction file contains multiple prompt/model runs; "
+            "score each run separately"
+        )
+    edge_ids = [str(row.get("edge_id", "")).strip() for row in prediction_rows]
+    if any(not edge_id for edge_id in edge_ids):
+        raise ValueError("every prediction must have an edge_id")
+    duplicates = sorted(
+        edge_id for edge_id, count in Counter(edge_ids).items() if count > 1
+    )
+    if duplicates:
+        raise ValueError(f"prediction file contains duplicate edge_ids: {duplicates}")
+    for row in prediction_rows:
+        if row.get("parse_error"):
+            continue
+        edge_id = str(row.get("edge_id", ""))
+        if row.get("verdict") not in VALID_VERDICTS:
+            raise ValueError(f"prediction {edge_id} has an invalid verdict")
+        if row.get("corrected_strength") not in PREDICTED_STRENGTHS:
+            raise ValueError(f"prediction {edge_id} has an invalid strength")
+        if row.get("corrected_basis") not in VALID_BASES:
+            raise ValueError(f"prediction {edge_id} has an invalid basis")
+
+
+def _completed_gold(
+    gold_rows: list[dict[str, str]], split: str = "all"
+) -> dict[str, dict[str, str]]:
+    if split not in {"development", "test", "all"}:
+        raise ValueError("split must be development, test, or all")
+    incomplete_status = [
+        row.get("edge_id", "")
+        for row in gold_rows
+        if row.get("gold_verdict", "")
+        and row.get("annotation_status", "").strip().casefold() != "complete"
+    ]
+    if incomplete_status:
+        raise ValueError(
+            "gold rows with adjudicated labels must set annotation_status=complete: "
+            f"{sorted(incomplete_status)}"
+        )
+    eligible_rows = [
+        row
+        for row in gold_rows
+        if (
+            row.get("annotation_status", "").casefold() == "complete"
+            or row.get("gold_verdict", "")
+        )
+        and (split == "all" or row.get("gold_split", "") == split)
+    ]
+    edge_ids = [row.get("edge_id", "").strip() for row in eligible_rows]
+    if any(not edge_id for edge_id in edge_ids):
+        raise ValueError("every completed gold row must have an edge_id")
+    duplicates = sorted(
+        edge_id for edge_id, count in Counter(edge_ids).items() if count > 1
+    )
+    if duplicates:
+        raise ValueError(f"gold file contains duplicate edge_ids: {duplicates}")
+    completed = {row["edge_id"]: row for row in eligible_rows}
+    for edge_id, row in completed.items():
         if row.get("gold_verdict") not in VALID_VERDICTS:
             raise ValueError(f"gold edge {edge_id} has an invalid verdict")
         if row.get("gold_strength") not in PREDICTED_STRENGTHS:
@@ -112,6 +168,26 @@ def score_rows(
             raise ValueError(f"gold edge {edge_id} has an invalid basis")
         if not row.get("gold_reason", "").strip():
             raise ValueError(f"gold edge {edge_id} is missing a reason")
+        if not row.get("gold_adjudicator", "").strip():
+            raise ValueError(f"gold edge {edge_id} is missing an adjudicator")
+        if not row.get("gold_adjudicated_at", "").strip():
+            raise ValueError(f"gold edge {edge_id} is missing an adjudication date")
+        try:
+            date.fromisoformat(row["gold_adjudicated_at"])
+        except ValueError as exc:
+            raise ValueError(
+                f"gold edge {edge_id} has a non-ISO adjudication date"
+            ) from exc
+    return completed
+
+
+def score_rows(
+    gold_rows: list[dict[str, str]],
+    prediction_rows: list[dict[str, Any]],
+    split: str = "all",
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    validate_prediction_run(prediction_rows)
+    completed_gold = _completed_gold(gold_rows, split)
     predictions = {
         str(row.get("edge_id", "")): row
         for row in prediction_rows
@@ -132,9 +208,14 @@ def score_rows(
 
     metrics: dict[str, object] = {
         "gold_rows": len(completed_gold),
+        "gold_split": split,
         "scored_rows": len(edge_ids),
         "missing_predictions": len(set(completed_gold) - set(predictions)),
-        "parse_errors": sum(bool(row.get("parse_error")) for row in prediction_rows),
+        "parse_errors": sum(
+            bool(row.get("parse_error"))
+            for row in prediction_rows
+            if str(row.get("edge_id", "")) in completed_gold
+        ),
         "verdict_accuracy": accuracy(gold_verdict, predicted_verdict),
         "verdict_kappa": cohen_kappa(gold_verdict, predicted_verdict),
         "verdict_macro_f1": macro_f1(gold_verdict, predicted_verdict),
@@ -177,6 +258,79 @@ def score_rows(
 
 
 def score_files(
-    gold_path: Path, prediction_path: Path
+    gold_path: Path, prediction_path: Path, split: str = "all"
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
-    return score_rows(read_csv(gold_path), read_jsonl(prediction_path))
+    return score_rows(read_csv(gold_path), read_jsonl(prediction_path), split)
+
+
+def human_agreement(gold_rows: list[dict[str, str]]) -> dict[str, object]:
+    annotation_fields = [
+        f"annotator_{annotator}_{field}"
+        for annotator in ("a", "b")
+        for field in ("verdict", "strength", "basis", "reason", "name", "reviewed_at")
+    ]
+    incomplete = [
+        row.get("edge_id", "")
+        for row in gold_rows
+        if any(row.get(field, "").strip() for field in annotation_fields)
+        and not all(row.get(field, "").strip() for field in annotation_fields)
+    ]
+    if incomplete:
+        raise ValueError(
+            f"partially completed dual annotations for edge_ids: {sorted(incomplete)}"
+        )
+    rows = [
+        row
+        for row in gold_rows
+        if row.get("annotator_a_verdict") and row.get("annotator_b_verdict")
+    ]
+    for row in rows:
+        for prefix in ("annotator_a", "annotator_b"):
+            if row[f"{prefix}_verdict"] not in VALID_VERDICTS:
+                raise ValueError(f"{row['edge_id']} has an invalid {prefix} verdict")
+            if row[f"{prefix}_strength"] not in PREDICTED_STRENGTHS:
+                raise ValueError(f"{row['edge_id']} has an invalid {prefix} strength")
+            if row[f"{prefix}_basis"] not in VALID_BASES:
+                raise ValueError(f"{row['edge_id']} has an invalid {prefix} basis")
+            try:
+                date.fromisoformat(row[f"{prefix}_reviewed_at"])
+            except ValueError as exc:
+                raise ValueError(
+                    f"{row['edge_id']} has a non-ISO {prefix} review date"
+                ) from exc
+    verdict_a = [row["annotator_a_verdict"] for row in rows]
+    verdict_b = [row["annotator_b_verdict"] for row in rows]
+    strength_a = [row["annotator_a_strength"] for row in rows]
+    strength_b = [row["annotator_b_strength"] for row in rows]
+    basis_a = [row["annotator_a_basis"] for row in rows]
+    basis_b = [row["annotator_b_basis"] for row in rows]
+    return {
+        "double_annotated_rows": len(rows),
+        "verdict_agreement": accuracy(verdict_a, verdict_b),
+        "verdict_kappa": cohen_kappa(verdict_a, verdict_b),
+        "strength_agreement": accuracy(strength_a, strength_b),
+        "strength_kappa": cohen_kappa(strength_a, strength_b),
+        "strength_weighted_kappa": quadratic_weighted_kappa(
+            strength_a, strength_b, STRENGTH_ORDER
+        )
+        if rows
+        else None,
+        "basis_agreement": accuracy(basis_a, basis_b),
+        "basis_kappa": cohen_kappa(basis_a, basis_b),
+    }
+
+
+def subgroup_scores(
+    gold_rows: list[dict[str, str]],
+    prediction_rows: list[dict[str, Any]],
+    split: str = "all",
+) -> list[dict[str, object]]:
+    completed = _completed_gold(gold_rows, split)
+    output: list[dict[str, object]] = []
+    for field in ("harm_domain", "current_strength"):
+        values = sorted({row.get(field, "") for row in completed.values()})
+        for value in values:
+            subset = [row for row in completed.values() if row.get(field, "") == value]
+            metrics, _ = score_rows(subset, prediction_rows, "all")
+            output.append({"group_field": field, "group_value": value, **metrics})
+    return output

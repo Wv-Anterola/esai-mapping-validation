@@ -84,6 +84,9 @@ def parse_response(text: str) -> dict[str, object]:
     strength = str(parsed.get("corrected_strength", "")).casefold()
     basis = str(parsed.get("corrected_basis", "")).casefold()
     confidence = str(parsed.get("confidence", "")).casefold()
+    scored_construct = str(parsed.get("scored_construct", "")).strip()
+    evidence_used = str(parsed.get("evidence_used", "")).strip()
+    inference_steps = parsed.get("inference_steps")
     reason = str(parsed.get("reason", "")).strip()
     review = parsed.get("needs_human_review")
     if verdict not in VALID_VERDICTS:
@@ -94,6 +97,12 @@ def parse_response(text: str) -> dict[str, object]:
         raise ValueError(f"invalid corrected_basis: {basis}")
     if confidence not in VALID_CONFIDENCE:
         raise ValueError(f"invalid confidence: {confidence}")
+    if not scored_construct:
+        raise ValueError("scored_construct is required")
+    if not evidence_used:
+        raise ValueError("evidence_used is required")
+    if not isinstance(inference_steps, int) or inference_steps < 0:
+        raise ValueError("inference_steps must be a non-negative integer")
     if not reason:
         raise ValueError("reason is required")
     if not isinstance(review, bool):
@@ -102,6 +111,9 @@ def parse_response(text: str) -> dict[str, object]:
         "verdict": verdict,
         "corrected_strength": strength,
         "corrected_basis": basis,
+        "scored_construct": scored_construct,
+        "evidence_used": evidence_used,
+        "inference_steps": inference_steps,
         "reason": reason,
         "confidence": confidence,
         "needs_human_review": review,
@@ -120,6 +132,28 @@ def _call_with_retry(call: Callable[[], str], attempts: int = 3) -> str:
     raise RuntimeError(f"LLM request failed after {attempts} attempts: {last_error}")
 
 
+def validate_prediction_input(
+    rows: list[dict[str, str]], *, allow_metadata_only: bool = False
+) -> None:
+    if not rows:
+        raise ValueError("prediction input is empty")
+    edge_ids = [row.get("edge_id", "").strip() for row in rows]
+    if any(not edge_id for edge_id in edge_ids):
+        raise ValueError("every prediction input row must have an edge_id")
+    if len(edge_ids) != len(set(edge_ids)):
+        raise ValueError("prediction input contains duplicate edge_ids")
+    ungrounded = [
+        row["edge_id"]
+        for row in rows
+        if row.get("context_status", "") != "source-grounded"
+    ]
+    if ungrounded and not allow_metadata_only:
+        raise ValueError(
+            f"prediction input contains {len(ungrounded)} rows without verified "
+            "source context"
+        )
+
+
 def run_predictions(
     *,
     input_path: Path,
@@ -128,12 +162,28 @@ def run_predictions(
     output_path: Path,
     client: CompletionClient,
     limit: int | None = None,
+    allow_metadata_only: bool = False,
 ) -> tuple[int, int]:
     rows = read_csv(input_path)
+    validate_prediction_input(rows, allow_metadata_only=allow_metadata_only)
     template = prompt_path.read_text(encoding="utf-8")
     digest = prompt_hash(template)
     prompt_name = prompt_path.stem
     existing = read_jsonl(output_path) if output_path.exists() else []
+    existing_runs = {
+        (str(row.get("prompt_sha256", "")), str(row.get("model", "")))
+        for row in existing
+    }
+    if existing_runs and existing_runs != {(digest, model)}:
+        raise ValueError(
+            "output file belongs to a different prompt/model run; use a new path"
+        )
+    existing_keys = [
+        (str(row.get("edge_id")), str(row.get("prompt_sha256")), str(row.get("model")))
+        for row in existing
+    ]
+    if len(existing_keys) != len(set(existing_keys)):
+        raise ValueError("output file contains duplicate prediction keys")
     completed = {
         (str(row.get("edge_id")), str(row.get("prompt_sha256")), str(row.get("model")))
         for row in existing
@@ -167,5 +217,6 @@ def run_predictions(
         except ValueError as exc:
             prediction["parse_error"] = str(exc)
         append_jsonl(output_path, prediction)
+        completed.add(key)
         written += 1
     return written, skipped
