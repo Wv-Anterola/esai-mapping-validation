@@ -1,82 +1,89 @@
 # Validation methodology
 
-## Design goals
+## Scope
 
-The workflow is designed to answer a narrow question reproducibly: does a benchmark-to-harm edge
-follow the project's coding rubric, and can a versioned prompt reproduce independent reviewer
-labels well enough to assist with the remaining edges?
+The unit of analysis is one `benchmark_id` to `harm_id` edge. The question is whether the
+benchmark's scored task and metric measure the named harm, and whether strength and evidentiary
+basis follow the coding rubric. This workflow does not establish a benchmark's general construct
+validity, aggregate benchmark scores, or make legal-compliance determinations.
 
-It does not measure construct validity of the benchmark itself, aggregate benchmark results, or
-make legal-compliance determinations.
+The primary run is restricted to rows whose `evidence_type` is `model benchmark`. Empirical
+studies, legal instruments, incident data, and other evidence types require different inference
+rules and must be evaluated in separately reported runs. They are never silently mixed into the
+model-benchmark agreement estimates.
 
-## Separation of checks
+## Preconditions
 
-Deterministic integrity checks run before semantic validation. Edges with colliding benchmark IDs
-are not suitable for semantic validation because an ID resolves to multiple sources. Invalid enum
-values and direct/face-validity combinations enter a review queue but are not silently rewritten.
+Deterministic integrity checks precede semantic validation. The following conditions block an
+edge from annotation or model evaluation:
 
-Semantic validation uses source metadata, benchmark task and metric, harm description, and current
-edge labels. It returns a proposed label and reason. The model never writes the tracker.
+- a benchmark ID resolves to multiple benchmark rows or an edge ID is duplicated;
+- the benchmark source URL or source abstract is unverified;
+- the benchmark description, task, or metric is missing;
+- a benchmark or harm ID is dangling;
+- strength or basis falls outside the controlled vocabulary.
 
-## Gold set
+The current tracker label is context, not evidence. Source metadata must come from the verified
+source registry or an exact normalized-title match in the systematic collection catalog. The
+model and human reviewers may not fill missing evidence from memory.
 
-The sampling algorithm is deterministic for a given workbook, size, and seed. It cycles across
-strata defined by current strength and benchmark evidence type, preventing the largest class from
-dominating the pilot. Ambiguous benchmark IDs are excluded by default.
+## Gold-set design
 
-Gold labels must be assigned independently by a person following `ANNOTATION_GUIDE.md`. Current
-labels remain visible because reviewers need to assess whether they are defensible, but they are
-not copied into the gold columns. Model predictions should not be shown to annotators before the
-first-pass labels are complete.
+Sampling is deterministic for a workbook hash, sample size, and seed. Rows are stratified by
+current strength and harm domain. Each benchmark appears at most once, preventing benchmark-level
+information from leaking across development and test rows. A request larger than the number of
+eligible unique benchmarks fails instead of silently returning a smaller or dependent sample.
+Colliding benchmark IDs and non-model evidence are excluded by default.
 
-Completed gold files are version-controlled. A revision to a gold judgment is a normal reviewed
-change and should state why the label changed. Source workbooks and model outputs remain outside
-Git.
+Within each stratum, approximately two thirds of rows are assigned to `development` and one third
+to `test`. Prompt iteration and model selection use development rows only. Test labels remain
+hidden until the prompt and exact model identifier are locked.
 
-If multiple human annotators are available, report their agreement before adjudication. Keep both
-raw annotation files and document adjudication decisions outside the model prompt.
+Two reviewers independently complete their annotation columns using the same source record and
+annotation guide. Cohen's kappa is reported for verdict, strength, and basis, with quadratic
+weighted kappa for ordinal strength. Disagreements are adjudicated into the final `gold_*` fields
+only after raw agreement is recorded. Gold corrections remain in version control with a reasoned
+commit.
 
-## Prompt comparison
+## Prompt evaluation
 
-Two prompt variants are versioned in `prompts/`. The first applies the coding rubric in a fixed
-sequence. The second applies an evidence-first counterexample test. Each run records the prompt
-file hash and exact model identifier, so editing a prompt creates a distinguishable experiment.
+Each prediction states the scored construct, source evidence used, number of inference steps,
+verdict, corrected strength and basis, confidence, rationale, and whether human review is needed.
+The output also records the exact prompt hash and model identifier. Mixed prompt/model runs and
+duplicate edge IDs are rejected rather than collapsed during scoring.
 
-Prompt selection should consider:
+The following acceptance criteria are fixed before inspecting the test split:
 
-- verdict accuracy, Cohen's kappa, and macro F1;
-- exact and quadratic-weighted agreement on strength;
-- basis agreement;
-- class-specific disagreements;
-- parse failures and missing results;
-- stability across benchmark evidence types and harm domains.
+- 100% prediction coverage and no unparsed responses;
+- verdict Cohen's kappa of at least 0.70;
+- verdict macro F1 of at least 0.75;
+- quadratic weighted kappa of at least 0.70 for strength;
+- no recurring error pattern that systematically converts downstream societal outcomes into
+  direct model measurements;
+- manual inspection of every development disagreement and all reported subgroup metrics.
 
-The team should agree on acceptance criteria before inspecting final prompt results. A single
-aggregate score should not hide systematic errors on rare or high-impact classes.
+These thresholds determine whether the system may be used to populate a review queue. They do
+not authorize automatic tracker changes. If the locked run fails the test criteria, revise on the
+development split and evaluate a newly reserved test set; do not tune against the failed test
+labels.
 
-## Full-data run
+## Full-data run and tracker integration
 
-Only the selected prompt/model combination is run on all unambiguous edges. Runs are append-only
-JSONL and resumable by edge ID, prompt hash, and model. Invalid responses are retained with a parse
-error rather than dropped.
+Only the locked prompt/model combination is run on all unambiguous model-benchmark edges. A
+handoff is incomplete if the audit still reports blocking source or metadata issues. Predictions
+are append-only and resumable for the same prompt hash and model.
 
-Predictions are joined back to the current workbook by `edge_id`. Any proposed change, parse
-failure, or explicit human-review flag enters `tracker_mapping_review.csv`.
-
-## Tracker integration
-
-Reviewers approve or reject each proposed change. The exporter validates enum values and writes an
-update-oriented patch keyed by `edge_id`. It does not edit `.xlsx` files and does not translate a
-`none` judgment into deletion. This preserves ownership and makes every applied change auditable.
-
-The patch schema is:
+Every proposed change, parse failure, or explicit review flag enters the review CSV. Reviewers
+approve or reject each row. The exporter requires a named reviewer and rationale and emits:
 
 `sheet, operation, edge_id, benchmark_id, harm_id, strength, basis, confidence, notes, reviewer`.
 
-## Re-running
+`operation=update` changes the coded relation. `operation=delete` removes an edge adjudicated as
+`strength=none`. The exporter never edits the workbook and never invents a new edge ID.
 
-A new workbook export, prompt edit, or model change is a new validation run. Keep the workbook
-hash, gold-set seed, prompt hash, model identifier, metrics, disagreements, and reviewed patch
-together in the handoff. Never compare metrics across runs if the gold labels changed without
-recording that change.
+## Reproducibility
 
+Every command writes a sidecar manifest containing the command, timestamp, package version, Git
+commit and dirty state, input hashes, output hash, workbook hash where applicable, parameters,
+and record counts. Keep the gold file, source registry, prompt, predictions, metrics,
+disagreements, subgroup metrics, review CSV, patch, and their manifests together for handoff.

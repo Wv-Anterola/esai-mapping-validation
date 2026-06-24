@@ -3,9 +3,9 @@
 ## Purpose
 
 The gold set measures whether a prompt reproduces independent human judgments. It must not be
-created by copying current labels or accepting model suggestions. If two people annotate, keep
-their first-pass labels separate and adjudicate disagreements only after calculating inter-rater
-agreement.
+created by copying current labels or accepting model suggestions. Two people annotate
+independently. Keep first-pass labels separate and adjudicate disagreements only after calculating
+inter-rater agreement.
 
 ## Unit of annotation
 
@@ -15,7 +15,8 @@ whether the benchmark is well designed in every other respect.
 
 ## Annotation steps
 
-1. Confirm the benchmark identity. Stop if the ID is ambiguous or the source cannot be resolved.
+1. Confirm the benchmark identity and verified source. Stop if the ID is ambiguous or the source
+   cannot be resolved.
 2. Identify the evaluation task and metric from the source, not from the proposed mapping.
 3. State the construct that a high or low score operationalizes.
 4. Compare that construct with the harm label and description.
@@ -59,12 +60,15 @@ Do not infer validation from a benchmark title, venue, or popularity.
 
 ## Completion requirements
 
-For every completed row, fill:
+Each reviewer fills their complete `annotator_a_*` or `annotator_b_*` field set, including name and
+ISO review date. Partially completed reviewer records are rejected by the agreement command.
+
+After agreement is recorded and disagreements are discussed, fill:
 
 - `annotation_status=complete`;
 - `gold_verdict`;
 - `gold_strength`, including `none` where appropriate;
 - `gold_basis`;
 - `gold_reason`;
-- `gold_annotator`;
-- `gold_reviewed_at` in ISO date format.
+- `gold_adjudicator`;
+- `gold_adjudicated_at` in ISO date format.

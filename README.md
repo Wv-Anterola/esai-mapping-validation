@@ -1,11 +1,11 @@
 # ESAI mapping validation
 
-This repository validates and prepares corrections for the workbook's `bench_measures_harm`
-relation. It combines deterministic data checks, an independently labelled gold set, versioned
-LLM prompts, agreement metrics, and mandatory human review.
+This repository validates the workbook's `bench_measures_harm` relation and prepares reviewed,
+tracker-ready corrections. It separates deterministic data checks, source verification, independent
+human annotation, model evaluation, and final human approval.
 
-The workflow never edits a workbook. Its final artifact is a reviewed patch CSV that can be
-applied by the tracker owner.
+The workflow never edits a workbook. Every generated artifact has a SHA-256 manifest, and the
+final outputs are explicit `update` or `delete` operations keyed by `edge_id`.
 
 ## Installation
 
@@ -15,7 +15,9 @@ Python 3.11 or newer is required.
 python -m pip install -e ".[dev]"
 ```
 
-Install the optional Anthropic client only on the machine used for model runs:
+No API key is needed for auditing, source preparation, annotation, scoring, review, or export. The
+optional Anthropic dependency and `ANTHROPIC_API_KEY` are used only if the later model-run command
+is selected:
 
 ```bash
 python -m pip install -e ".[anthropic,dev]"
@@ -23,34 +25,90 @@ python -m pip install -e ".[anthropic,dev]"
 
 ## 1. Audit the current mapping
 
+Use a fresh workbook export, not a previously downloaded copy:
+
 ```bash
 esai-validate audit \
-  --workbook "path/to/ESAI Harm-Bench-Legal Map.xlsx" \
+  --workbook "path/to/workbook.xlsx" \
+  --candidate-catalog "path/to/benchmark_candidates.csv" \
+  --source-registry sources/benchmark_sources.csv \
   --out outputs/deterministic_issues.csv
 ```
 
-This reports dangling IDs, ambiguous benchmark IDs, invalid strength or basis values, and
-`direct` plus `face-validity-only` combinations that require review.
+The audit reports ID collisions, dangling IDs, invalid enum values, missing source or benchmark
+metadata, missing harm descriptions, out-of-scope evidence types, and label combinations that
+require review. A sidecar manifest records hashes for the workbook, inputs, and output.
 
-## 2. Create and label the gold set
+Repeated edge IDs can be converted into a row-addressed tracker repair proposal. The first
+workbook occurrence retains its key; later occurrences receive unused IDs following the existing
+prefix and numeric convention:
+
+```bash
+esai-validate prepare-id-repairs \
+  --workbook "path/to/workbook.xlsx" \
+  --out outputs/duplicate_edge_id_repairs.csv
+```
+
+Review and apply these key repairs before creating the gold set. Benchmark-ID collisions cannot be
+split mechanically because their mapping rows do not identify which colliding benchmark title was
+intended; the tracker owner must resolve those separately.
+
+## 2. Resolve benchmark sources
+
+Create a source registry from the workbook:
+
+```bash
+esai-validate prepare-source-registry \
+  --workbook "path/to/workbook.xlsx" \
+  --candidate-catalog "path/to/benchmark_candidates.csv" \
+  --out sources/benchmark_sources.csv
+```
+
+Fill `source_url` and `source_abstract`, then change `source_status` from `pending` to `verified`
+only after checking the benchmark identity. A collection catalog can also supply source metadata
+when its normalized paper title exactly matches the tracker title. Registry entries take
+precedence. Unverified registry entries are never treated as source-grounded.
+
+Do not begin semantic annotation or a model run while relevant rows remain
+`benchmark_source_missing` or `benchmark_metadata_incomplete` in the audit.
+`prepare-gold`, `prepare-all`, and `run` enforce source-grounded inputs by default.
+`--allow-metadata-only` exists only to generate diagnostic work queues; do not use such output for
+agreement estimates or tracker decisions.
+
+## 3. Create and label the gold set
 
 ```bash
 esai-validate prepare-gold \
   --workbook "path/to/workbook.xlsx" \
-  --size 60 \
+  --candidate-catalog "path/to/benchmark_candidates.csv" \
+  --source-registry sources/benchmark_sources.csv \
+  --size 90 \
   --seed 20260624 \
   --out gold/gold_edges.csv
 ```
 
-The sample is stratified by current strength and evidence type. Colliding benchmark IDs are
-excluded by default because the benchmark identity is ambiguous. Complete the `gold_*` fields
-manually and set `annotation_status=complete`. Current labels are context, not gold labels.
+The default sample contains model benchmarks only, excludes colliding IDs, balances current
+strength and harm domain, and includes at most one edge per benchmark. It assigns a fixed
+development/test split. Use `--include-non-model` only with a separate evidence-type-specific
+rubric; use `--include-collisions` only after the ambiguous identity has been resolved.
 
-See [ANNOTATION_GUIDE.md](ANNOTATION_GUIDE.md) before annotating.
+Two reviewers independently complete the `annotator_a_*` and `annotator_b_*` fields without
+seeing model output. Record agreement before adjudication:
 
-## 3. Run and compare prompt variants
+```bash
+esai-validate human-agreement \
+  --gold gold/gold_edges.csv \
+  --out outputs/human_agreement.json
+```
 
-No model name is hard-coded. Record the exact provider model identifier used for every run.
+After adjudication, complete the `gold_*` fields and set `annotation_status=complete`. See
+[ANNOTATION_GUIDE.md](ANNOTATION_GUIDE.md).
+
+## 4. Evaluate prompt variants
+
+Model execution is a later, optional stage. Each prompt/model pair must use a separate output
+file. Runs are resumable and record the exact model, prompt hash, timestamp, parsed fields, raw
+response, and parse error.
 
 ```bash
 set ANTHROPIC_API_KEY=...
@@ -60,42 +118,34 @@ esai-validate run \
   --prompt prompts/rubric_v1.txt \
   --model "provider-model-id" \
   --out outputs/gold_rubric_v1.jsonl
-
-esai-validate run \
-  --input gold/gold_edges.csv \
-  --prompt prompts/rubric_v2.txt \
-  --model "provider-model-id" \
-  --out outputs/gold_rubric_v2.jsonl
 ```
 
-Runs are resumable. Each prediction records the model, prompt name, prompt SHA-256, timestamp,
-parsed decision, raw response, and parsing error.
-
-Score and compare the runs:
+Compare variants on the development split only:
 
 ```bash
 esai-validate score \
   --gold gold/gold_edges.csv \
   --predictions outputs/gold_rubric_v1.jsonl \
-  --metrics outputs/rubric_v1_metrics.json \
-  --disagreements outputs/rubric_v1_disagreements.csv
+  --split development \
+  --metrics outputs/rubric_v1_metrics.json
 
 esai-validate compare \
   --gold gold/gold_edges.csv \
+  --split development \
   outputs/gold_rubric_v1.jsonl outputs/gold_rubric_v2.jsonl \
   --out outputs/prompt_comparison.csv
 ```
 
-Reported measures include verdict and strength accuracy, Cohen's kappa, macro F1, quadratic
-weighted kappa for strength, basis agreement, missing predictions, and parse failures.
+Lock the selected prompt and model before scoring the test split. The predeclared acceptance
+criteria are in [METHODOLOGY.md](METHODOLOGY.md).
 
-## 4. Validate all unambiguous edges
-
-After selecting a prompt and model from the gold-set results:
+## 5. Validate all eligible edges and prepare tracker changes
 
 ```bash
 esai-validate prepare-all \
   --workbook "path/to/workbook.xlsx" \
+  --candidate-catalog "path/to/benchmark_candidates.csv" \
+  --source-registry sources/benchmark_sources.csv \
   --out outputs/all_edges.csv
 
 esai-validate run \
@@ -103,32 +153,24 @@ esai-validate run \
   --prompt prompts/rubric_v1.txt \
   --model "provider-model-id" \
   --out outputs/all_predictions.jsonl
-```
 
-`prepare-all` excludes edges attached to colliding benchmark IDs by default. Resolve those IDs
-before validation or opt in explicitly with `--include-collisions`.
-
-## 5. Combine results with the tracker
-
-```bash
 esai-validate prepare-review \
   --workbook "path/to/workbook.xlsx" \
   --predictions outputs/all_predictions.jsonl \
+  --candidate-catalog "path/to/benchmark_candidates.csv" \
+  --source-registry sources/benchmark_sources.csv \
   --out outputs/tracker_mapping_review.csv
 ```
 
-Reviewers inspect the current and proposed labels, set `review_status=approved` where appropriate,
-and add their name and notes. Export approved updates with:
+Every proposed change requires human review. Approved rows must have a named reviewer and a
+rationale. Export produces tracker-compatible updates; a reviewed `strength=none` decision
+becomes an explicit delete operation.
 
 ```bash
 esai-validate export \
   --review outputs/tracker_mapping_review.csv \
   --out outputs/tracker_patch.csv
 ```
-
-The patch identifies `sheet=bench_measures_harm`, `operation=update`, `edge_id`, IDs, corrected
-strength, basis, confidence, notes, and reviewer. A prediction of `strength=none` is not converted
-into a deletion; removals require explicit tracker-owner handling.
 
 ## Development
 
@@ -138,5 +180,5 @@ ruff check mapping_validation tests
 pytest
 ```
 
-Workbooks, model outputs, and tracker patches are ignored by Git. Completed gold annotations are
-version-controlled because they define the evaluation set; do not commit a source workbook.
+Source workbooks, model outputs, and patches are ignored by Git. Completed gold annotations and
+verified source registries are version-controlled because they define the evaluation evidence.
