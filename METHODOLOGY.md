@@ -12,6 +12,11 @@ studies, legal instruments, incident data, and other evidence types require diff
 rules and must be evaluated in separately reported runs. They are never silently mixed into the
 model-benchmark agreement estimates.
 
+Existing-edge validation and missing-edge discovery are separate tasks. Existing-edge validation
+scores a proposed `benchmark_id` to `harm_id` relation. Missing-edge discovery may propose new
+candidate relations, but those candidates must be reviewed and then validated through the same
+edge-level workflow before tracker import.
+
 ## Preconditions
 
 Deterministic integrity checks precede semantic validation. The following conditions block an
@@ -81,6 +86,9 @@ approve or reject each row. The exporter requires a named reviewer and rationale
 
 `operation=update` changes the coded relation. `operation=delete` removes an edge adjudicated as
 `strength=none`. The exporter never edits the workbook and never invents a new edge ID.
+
+For missing-edge discovery, the exporter is not used directly. Accepted candidate edges first need
+tracker-owner IDs and source verification, then enter a normal validation run.
 
 ## Reproducibility
 

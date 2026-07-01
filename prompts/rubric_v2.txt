@@ -1,4 +1,4 @@
-Act as an independent reviewer of a proposed benchmark-to-harm mapping. Use only the record below.
+Role: independent reviewer of a proposed benchmark-to-harm mapping. Use only the record below.
 Missing source evidence must lower confidence or produce INSUFFICIENT-EVIDENCE; it must never be
 filled from memory.
 

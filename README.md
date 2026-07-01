@@ -116,9 +116,9 @@ set ANTHROPIC_API_KEY=...
 
 esai-validate run \
   --input gold/gold_edges.csv \
-  --prompt prompts/rubric_v1.txt \
+  --prompt prompts/rubric_v3_mapping_validator.txt \
   --model "provider-model-id" \
-  --out outputs/gold_rubric_v1.jsonl
+  --out outputs/gold_rubric_v3.jsonl
 ```
 
 Compare variants on the development split only:
@@ -126,19 +126,23 @@ Compare variants on the development split only:
 ```bash
 esai-validate score \
   --gold gold/gold_edges.csv \
-  --predictions outputs/gold_rubric_v1.jsonl \
+  --predictions outputs/gold_rubric_v3.jsonl \
   --split development \
-  --metrics outputs/rubric_v1_metrics.json
+  --metrics outputs/rubric_v3_metrics.json
 
 esai-validate compare \
   --gold gold/gold_edges.csv \
   --split development \
-  outputs/gold_rubric_v1.jsonl outputs/gold_rubric_v2.jsonl \
+  outputs/gold_rubric_v2.jsonl outputs/gold_rubric_v3.jsonl \
   --out outputs/prompt_comparison.csv
 ```
 
 Lock the selected prompt and model before scoring the test split. The predeclared acceptance
 criteria are in [METHODOLOGY.md](METHODOLOGY.md).
+
+`prompts/harm_candidate_selection_v1.txt` is a separate, recall-oriented prompt for discovering
+missing candidate edges. It should not be scored as a validator and should not directly produce
+tracker patches. See [MAPPING_IMPROVEMENTS.md](MAPPING_IMPROVEMENTS.md).
 
 ## 5. Validate all eligible edges and prepare tracker changes
 
@@ -151,7 +155,7 @@ esai-validate prepare-all \
 
 esai-validate run \
   --input outputs/all_edges.csv \
-  --prompt prompts/rubric_v1.txt \
+  --prompt prompts/rubric_v3_mapping_validator.txt \
   --model "provider-model-id" \
   --out outputs/all_predictions.jsonl
 
